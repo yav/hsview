@@ -1,0 +1,21 @@
+body { background-color: #333; color: #eee; }
+
+#controls {
+  position: fixed;
+  top: 1em;
+  right: 1em;
+  padding: 3px;
+  color: black;
+  background-color: orange;
+}
+
+
+.block { white-space: pre; font-family: monospace; }
+
+.comment { color: cyan; }
+.kw { font-weight: bold; color: #9c3; }
+.infix { color: yellow; }
+.infix>.kw { color: yellow; }
+.lit { color: #c9c; }
+
+
