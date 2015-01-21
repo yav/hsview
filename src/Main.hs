@@ -56,8 +56,8 @@ options = OptSpec
       , Option [] ["no-sigs"] "Hide type signatures."
         $ NoArg $ addFilter noSigs
 
-      , Option [] ["no-haddock"] "Hide top-level hasddock comments."
-        $ NoArg $ addFilter noHaddock
+      , Option [] ["no-comments"] "Hide top-level comments."
+        $ NoArg $ addFilter noComments
 
       , Option ['h'] ["help"] "Show this help."
         $ NoArg $ \s -> Right s { showHelp = True }
@@ -81,9 +81,10 @@ noImports :: Decl -> Maybe Decl
 noImports (Import {}) = Nothing
 noImports d           = Just d
 
-noHaddock :: Decl -> Maybe Decl
-noHaddock (HaddockComment {}) = Nothing
-noHaddock d                   = Just d
+noComments :: Decl -> Maybe Decl
+noComments (LineComment {})  = Nothing
+noComments (BlockComment {}) = Nothing
+noComments d                 = Just d
 
 noSigs :: Decl -> Maybe Decl
 noSigs (TySig {}) = Nothing
@@ -116,13 +117,33 @@ main =
         then dumpUsage options
         else do let render
                       | makeHtml settings =
-                            htmlDoc (useCSS settings) (reverse $ useJS settings)
+                            htmlDoc (reverse $ useCSS settings)
+                                    (reverse $ useJS settings)
                                   . concatMap declToHtml
                       | otherwise = concatMap flatten
-                interact (render . mapMaybe (filters settings) . decls)
+                interact (render . catDecls . map (filters settings) . decls)
 
 decls :: String -> [Decl]
-decls = map classify . blocks . lexerPass0
+decls = foldr joinHaddocks [] . map classify . blocks . lexerPass0
+  where
+  isLineComment (LineComment Normal xs) = True
+  isLineComment _ = False
+
+  lineCommentToks (LineComment _ xs) = xs
+  lineCommentToks _                  = []
+
+  joinHaddocks (LineComment f@(Haddock _) xs) ys =
+    let (as,bs) = span isLineComment ys
+    in LineComment f (concat (xs : map lineCommentToks as)) : bs
+
+  joinHaddocks x xs = x : xs
+
+catDecls :: [Maybe Decl] -> [Maybe Decl]
+catDecls = foldr cons []
+  where cons Nothing (Just x : xs) = Nothing : Just x : xs
+        cons Nothing xs            = xs
+        cons (Just x) xs           = Just x : xs
+
 
 
 
@@ -139,11 +160,13 @@ data Decl =
   | Class [PosToken] [PosToken]
   | Instance [PosToken] [PosToken]
   | TySig [PosToken]
-  | HaddockComment [PosToken]
+  | LineComment CommentType [PosToken]
+  | BlockComment CommentType [PosToken]
   | Code [PosToken]
-    deriving Show
+  | CPP [PosToken]
 
-
+data CommentType = Pragma | Haddock Dir | Normal
+data Dir         = Up | Down
 
 type Block = [ PosToken ]
 
@@ -158,14 +181,13 @@ block (l : ls) = Just (l : this, rest)
   where (this,rest) = break startsBlock ls
 
 blocks :: [PosToken] -> [Block]
--- ^ This is a doc.
 blocks = unfoldr block
-
-
 
 classify :: Block -> Decl
 classify b =
   case b of
+    (Varsym, (_,"#")) : _ -> CPP b
+
     (Reservedid, (_,kw)) : _
       | kw == "import"   -> Import b
       | kw == "class"    -> splitOn isWhere Class
@@ -177,15 +199,20 @@ classify b =
       | kw `elem` [ "data", "type", "newtype" ] -> splitOn isEq Type
 
 
-    (NestedComment, (_,s)) : _ | isHaddock s -> HaddockComment b
-    (Commentstart, _) : (Comment, (_,s)) : _ | isHaddock s -> HaddockComment b
+    (NestedComment, (_,s)) : _ -> BlockComment (commentTy $ drop 2 s) b
+    (Commentstart, _) : (Comment, (_,s)) : _ -> LineComment (commentTy s) b
 
     _ | isTySig b -> TySig b
 
     _ -> Code b
 
   where
-  isHaddock = (`elem` ["|","^"]) . take 1 . dropWhile isSpace
+  commentTy s =
+    case take 1 (dropWhile isSpace s) of
+      "|" -> Haddock Down
+      "^" -> Haddock Up
+      "#" -> Pragma
+      _   -> Normal
 
   isEq (Reservedop, (_,"=")) = True
   isEq _ = False
@@ -195,7 +222,6 @@ classify b =
 
   splitOn p f = let (as,bs) = break p b
                 in f as bs
-
 
 isTySig :: Block -> Bool
 isTySig = go . rmSpace
@@ -211,15 +237,17 @@ isTySig = go . rmSpace
 
 
 
-flatten :: Decl -> String
-flatten d =
+flatten :: Maybe Decl -> String
+flatten Nothing = "\n"
+flatten (Just d) =
   case d of
     Import ps         -> flat ps
     Type as bs        -> flat as ++ flat bs
     Instance as bs    -> flat as ++ flat bs
     Class as bs       -> flat as ++ flat bs
     TySig a           -> flat a
-    HaddockComment a  -> flat a
+    LineComment _ a   -> flat a
+    BlockComment _ a  -> flat a
     Code a            -> flat a
 
   where txt (_,(_,t)) = t
@@ -241,20 +269,28 @@ hspan c h = "<span class=" ++ show c ++ ">" ++ h ++ "</span>"
 hdiv :: String -> Html -> Html
 hdiv c h = "<div class=" ++ show c ++ ">" ++ h ++ "</div>"
 
-declToHtml :: Decl -> Html
-declToHtml d =
+declToHtml :: Maybe Decl -> Html
+declToHtml Nothing = "<br>"
+declToHtml (Just d) =
   case d of
-    Import as         -> atom "block import" as
-    Code as           -> atom "block code"  as
-    TySig as          -> atom "block signature" as
-    HaddockComment as -> atom "block haddock" as
-    Type as bs        -> sub "block type" as bs
-    Class as bs       -> sub "block class" as bs
-    Instance as bs    -> sub "block instance" as bs
+    Import as               -> atom "block import" as
+    Code as                 -> atom "block code"  as
+    TySig as                -> atom "block signature" as
+    LineComment c as        -> atom ("block bcomment " ++ commentC c) as
+    BlockComment c as       -> atom ("block bcomment " ++ commentC c) as
+    Type as bs              -> sub  "block type" as bs
+    Class as bs             -> sub  "block class" as bs
+    Instance as bs          -> sub  "block instance" as bs
+    CPP as  -> hdiv "block cpp" $ concat [ toHtml s | (_,(_,s)) <- as ]
 
   where
   atom c as   = hdiv c (tokensToHtml as)
   sub c as bs = hdiv c (tokensToHtml as ++ hspan "sub" (tokensToHtml bs))
+  commentC c = case c of
+                 Pragma       -> "pragma"
+                 Haddock Down -> "haddock_next"
+                 Haddock Up   -> "haddock_up"
+                 Normal       -> ""
 
 tokensToHtml :: [PosToken] -> Html
 tokensToHtml [] = []

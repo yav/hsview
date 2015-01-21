@@ -9,13 +9,13 @@ body { background-color: #333; color: #eee; }
   background-color: orange;
 }
 
-
-.block { white-space: pre; font-family: monospace; }
-
+.block { white-space: pre; font-family: monospace; margin: 5px; }
+.pragma .comment { color: red; }
+.cpp { color: #99f; }
 .comment { color: cyan; }
 .kw { font-weight: bold; color: #9c3; }
-.infix { color: yellow; }
-.infix>.kw { color: yellow; }
+.infix { color: #cc0; }
+.infix>.kw { color: #cc0; }
 .lit { color: #c9c; }
 
 
