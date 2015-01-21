@@ -1,0 +1,26 @@
+name:                hsview
+version:             0.1.0.0
+synopsis:            A viewer for Haskell source code
+license:             BSD3
+license-file:        LICENSE
+author:              Iavor S. Diatchki
+maintainer:          iavor.diatchki@gmail.com
+category:            Development
+build-type:          Simple
+-- extra-source-files:  
+cabal-version:       >=1.10
+
+executable hsview
+  main-is:             Main.hs
+  build-depends:
+    base < 10,
+    simple-get-opt,
+    haskell-lexer
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+  GHC-options: -Wall
+
+source-repository head
+  type:     git
+  location: git://github.com/yav/hsview
+
